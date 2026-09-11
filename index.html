@@ -60,22 +60,45 @@
 
   .meta { font-size: 12px; color: var(--text-dim); margin-bottom: 18px; font-family: 'IBM Plex Mono', monospace; }
 
+  /* filter bar */
+  .filterbar {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 14px 16px; margin-bottom: 14px; align-items: center;
+  }
+  .filterbar input[type="text"],
+  .filterbar input[type="date"],
+  .filterbar select {
+    background: var(--surface-alt); color: var(--text); border: 1px solid var(--border);
+    padding: 8px 10px; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
+    min-width: 0;
+  }
+  .filterbar input[type="text"] { flex: 1 1 180px; }
+  .filterbar select { flex: 0 1 160px; }
+  .filterbar .date-group { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 12px; flex: 0 0 auto; }
+  .filterbar .date-group input { flex: 0 0 135px; }
+  .filterbar button.reset { flex: 0 0 auto; }
+  .hidden-field { display: none !important; }
+
   .grid { display: grid; gap: 14px; }
   .stats { grid-template-columns: 1.4fr 1fr 1fr 1fr; margin-bottom: 14px; }
   .charts { grid-template-columns: 1.6fr 1fr; margin-bottom: 14px; }
   @media (max-width: 780px) {
     .stats { grid-template-columns: 1fr 1fr; }
     .charts { grid-template-columns: 1fr; }
+    .filterbar { flex-direction: column; align-items: stretch; }
+    .filterbar select, .filterbar .date-group input { flex: 1 1 auto; }
   }
 
-  .card { background: var(--surface); border: 1px solid var(--border); padding: 20px 22px; }
-  .card.big { padding: 28px 26px; min-height: 150px; }
-  .card:not(.big) { min-height: 120px; }
-  .card { display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
-  .card .label { font-size: 12px; letter-spacing: 0.03em; color: var(--text-dim); }
-  .card .value { font-family: 'Spectral', serif; font-size: 26px; line-height: 1.05; }
-  .card.big .value { font-size: 42px; }
-  .card .sub { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text-dim); }
+  /* stat cards: fixed internal rhythm so every card lines up regardless of content */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 20px 22px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .card .label { font-size: 12px; letter-spacing: 0.03em; color: var(--text-dim); min-height: 15px; }
+  .card .value { font-family: 'Spectral', serif; font-size: 26px; line-height: 1.05; margin-top: 2px; }
+  .card .sub { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text-dim); margin-top: auto; min-height: 15px; }
 
   .panel { background: var(--surface); border: 1px solid var(--border); padding: 20px 20px 12px; }
   .panel .ptitle { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
@@ -116,6 +139,20 @@
   <div id="dashboard" class="hidden">
     <div class="meta" id="metaLine"></div>
 
+    <div class="filterbar" id="filterBar">
+      <input type="text" id="searchInput" placeholder="Search records…" />
+      <select id="categoryFilter" class="hidden-field">
+        <option value="">All categories</option>
+      </select>
+      <div class="date-group hidden-field" id="dateGroup">
+        <span>From</span>
+        <input type="date" id="dateFrom" />
+        <span>to</span>
+        <input type="date" id="dateTo" />
+      </div>
+      <button class="reset" id="resetFiltersBtn">Reset filters</button>
+    </div>
+
     <div class="grid stats" id="statCards"></div>
 
     <div class="grid charts">
@@ -137,7 +174,7 @@
     </div>
 
     <div class="panel table-wrap">
-      <div class="ptitle">First 10 rows</div>
+      <div class="ptitle" id="tableTitle">First 10 rows</div>
       <table class="sd-table" id="dataTable"></table>
     </div>
 
@@ -151,7 +188,9 @@
 const COLORS = { gold: '#C9A24B', teal: '#4C9A8B', rose: '#B5674A', border: '#2C3742', textDim: '#8FA0AC', text: '#EDEAE0', surface: '#181E25' };
 const SLICE_COLORS = ['#C9A24B', '#4C9A8B', '#B5674A', '#7A93A6', '#8E7A4C', '#5B8375', '#9C6B57', '#6E7F8C'];
 
-let rows = null;
+let allRows = null;      // full parsed dataset, never mutated by filters
+let cols = [];
+let numCol = null, catCol = null, dateCol = null;
 let charts = { bar: null, pie: null, trend: null };
 
 const $ = (id) => document.getElementById(id);
@@ -159,9 +198,16 @@ const $ = (id) => document.getElementById(id);
 function fmtNum(n) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: n % 1 === 0 ? 0 : 2 }).format(n);
 }
+function fmtCurrency(n) {
+  return `RM ${fmtNum(n)}`;
+}
 function monthLabel(key) {
   const [y, m] = key.split('-');
   return new Date(Number(y), Number(m) - 1, 1).toLocaleString('en-US', { month: 'short', year: '2-digit' });
+}
+function toDateInputValue(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function detectColumns(rows) {
@@ -189,11 +235,11 @@ function pickCategory(cols) {
 }
 function pickDate(cols) { return cols.find((c) => c.type === 'date'); }
 
-function groupSum(rows, catCol, numCol, topN = 7) {
+function groupSum(rows, catColName, numColName, topN = 7) {
   const map = new Map();
   rows.forEach((r) => {
-    const key = r[catCol] === undefined || r[catCol] === null || r[catCol] === '' ? 'Unspecified' : String(r[catCol]);
-    const val = Number(r[numCol]) || 0;
+    const key = r[catColName] === undefined || r[catColName] === null || r[catColName] === '' ? 'Unspecified' : String(r[catColName]);
+    const val = Number(r[numColName]) || 0;
     map.set(key, (map.get(key) || 0) + val);
   });
   const arr = Array.from(map, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
@@ -205,13 +251,13 @@ function groupSum(rows, catCol, numCol, topN = 7) {
   }
   return arr;
 }
-function groupByMonth(rows, dateCol, numCol) {
+function groupByMonth(rows, dateColName, numColName) {
   const map = new Map();
   rows.forEach((r) => {
-    const d = r[dateCol];
+    const d = r[dateColName];
     if (!(d instanceof Date) || isNaN(d)) return;
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    map.set(key, (map.get(key) || 0) + (Number(r[numCol]) || 0));
+    map.set(key, (map.get(key) || 0) + (Number(r[numColName]) || 0));
   });
   return Array.from(map, ([month, value]) => ({ month, value })).sort((a, b) => a.month.localeCompare(b.month));
 }
@@ -236,25 +282,106 @@ function buildSample() {
   return rows;
 }
 
+// sub is always rendered (as a non-breaking space if empty) so every card keeps the same height/rhythm
 function statCard(label, value, sub, big) {
   return `<div class="card ${big ? 'big' : ''}">
     <div class="label">${label}</div>
     <div class="value">${value}</div>
-    ${sub ? `<div class="sub">${sub}</div>` : ''}
+    <div class="sub">${sub || '&nbsp;'}</div>
   </div>`;
 }
 
-function renderDashboard() {
-  const cols = detectColumns(rows);
-  const numCol = pickPrimaryNumeric(cols);
-  const catCol = pickCategory(cols);
-  const dateCol = pickDate(cols);
+// ---------- filtering ----------
+function setupFilterBar() {
+  const categorySelect = $('categoryFilter');
+  const dateGroup = $('dateGroup');
 
+  if (catCol) {
+    const unique = Array.from(new Set(allRows.map((r) => r[catCol.name]).filter((v) => v !== null && v !== undefined && v !== ''))).sort();
+    categorySelect.innerHTML = `<option value="">All ${catCol.name}</option>` + unique.map((v) => `<option value="${String(v).replace(/"/g, '&quot;')}">${v}</option>`).join('');
+    categorySelect.classList.remove('hidden-field');
+  } else {
+    categorySelect.classList.add('hidden-field');
+  }
+
+  if (dateCol) {
+    const dates = allRows.map((r) => r[dateCol.name]).filter((d) => d instanceof Date && !isNaN(d));
+    if (dates.length) {
+      const min = new Date(Math.min(...dates));
+      const max = new Date(Math.max(...dates));
+      $('dateFrom').min = toDateInputValue(min);
+      $('dateFrom').max = toDateInputValue(max);
+      $('dateTo').min = toDateInputValue(min);
+      $('dateTo').max = toDateInputValue(max);
+      $('dateFrom').value = '';
+      $('dateTo').value = '';
+    }
+    dateGroup.classList.remove('hidden-field');
+  } else {
+    dateGroup.classList.add('hidden-field');
+  }
+
+  $('searchInput').value = '';
+}
+
+function getFilteredRows() {
+  const search = $('searchInput').value.trim().toLowerCase();
+  const category = $('categoryFilter').value;
+  const dateFrom = $('dateFrom').value ? new Date($('dateFrom').value + 'T00:00:00') : null;
+  const dateTo = $('dateTo').value ? new Date($('dateTo').value + 'T23:59:59') : null;
+
+  return allRows.filter((r) => {
+    if (category && catCol && String(r[catCol.name]) !== category) return false;
+    if (dateCol && (dateFrom || dateTo)) {
+      const d = r[dateCol.name];
+      if (!(d instanceof Date) || isNaN(d)) return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+    }
+    if (search) {
+      const hit = cols.some((c) => {
+        const v = r[c.name];
+        if (v === null || v === undefined) return false;
+        const s = v instanceof Date ? v.toLocaleDateString() : String(v);
+        return s.toLowerCase().includes(search);
+      });
+      if (!hit) return false;
+    }
+    return true;
+  });
+}
+
+function applyFilters() {
+  renderDashboard(getFilteredRows());
+}
+
+// ---------- rendering ----------
+function renderDashboard(rows) {
   $('dashboard').classList.remove('hidden');
   $('dropzone').classList.add('hidden');
 
   if (!numCol) {
     $('dashboard').innerHTML = `<div class="panel" style="color:${COLORS.rose}">No numeric column detected — need at least one column of numbers to build stats.</div>`;
+    return;
+  }
+
+  const totalRows = allRows.length;
+  $('metaLine').textContent = rows.length === totalRows
+    ? `${window.__fileName} · ${totalRows} rows · summing "${numCol.name}"${catCol ? ` · grouped by "${catCol.name}"` : ''}${dateCol ? ` · trend by "${dateCol.name}"` : ''}`
+    : `${window.__fileName} · showing ${rows.length} of ${totalRows} rows (filtered) · summing "${numCol.name}"`;
+
+  Object.values(charts).forEach((c) => c && c.destroy());
+
+  if (!rows.length) {
+    $('statCards').innerHTML = statCard(`Total ${numCol.name}`, 'RM 0', 'no matching records', true) +
+      statCard('Average per record', '—') + statCard('Highest single value', '—') + statCard('Records', '0');
+    $('barChart').classList.add('hidden'); $('pieChart').classList.add('hidden');
+    $('barEmpty').classList.remove('hidden'); $('pieEmpty').classList.remove('hidden');
+    $('barEmpty').textContent = 'No records match your filters.';
+    $('pieEmpty').textContent = 'No records match your filters.';
+    $('trendPanel').classList.add('hidden');
+    $('tableTitle').textContent = 'No matching rows';
+    $('dataTable').innerHTML = '';
     return;
   }
 
@@ -266,19 +393,13 @@ function renderDashboard() {
   const byCategory = catCol ? groupSum(rows, catCol.name, numCol.name) : null;
   const byMonth = dateCol ? groupByMonth(rows, dateCol.name, numCol.name) : null;
 
-  $('metaLine').textContent = `${window.__fileName} · ${rows.length} rows · summing "${numCol.name}"` +
-    (catCol ? ` · grouped by "${catCol.name}"` : '') +
-    (dateCol ? ` · trend by "${dateCol.name}"` : '');
-
   $('statCards').innerHTML =
-    statCard(`Total ${numCol.name}`, fmtNum(total), `across ${rows.length} records`, true) +
-    statCard('Average per record', fmtNum(Math.round(avg * 100) / 100)) +
-    statCard('Highest single value', fmtNum(max), catCol ? String(maxRow[catCol.name] ?? '') : '') +
+    statCard(`Total ${numCol.name}`, fmtCurrency(total), `across ${rows.length} records`, true) +
+    statCard('Average per record', fmtCurrency(Math.round(avg))) +
+    statCard('Highest single value', fmtCurrency(max), catCol ? String(maxRow[catCol.name] ?? '') : '') +
     statCard('Records', fmtNum(rows.length), dateCol ? `${byMonth?.length || 0} months covered` : '');
 
   $('catTitle').textContent = catCol ? `By ${catCol.name}` : 'Breakdown';
-
-  Object.values(charts).forEach((c) => c && c.destroy());
 
   if (byCategory) {
     $('barEmpty').classList.add('hidden');
@@ -293,7 +414,7 @@ function renderDashboard() {
         datasets: [{ data: byCategory.map((d) => d.value), backgroundColor: byCategory.map((_, i) => SLICE_COLORS[i % SLICE_COLORS.length]) }],
       },
       options: {
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => fmtNum(ctx.parsed.y) } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => fmtCurrency(ctx.parsed.y) } } },
         scales: {
           x: { ticks: { color: COLORS.textDim, font: { family: 'IBM Plex Sans', size: 11 } }, grid: { display: false } },
           y: { ticks: { color: COLORS.textDim, font: { family: 'IBM Plex Mono', size: 11 } }, grid: { color: COLORS.border } },
@@ -310,13 +431,15 @@ function renderDashboard() {
       options: {
         plugins: {
           legend: { position: 'bottom', labels: { color: COLORS.textDim, font: { family: 'IBM Plex Sans', size: 11 }, boxWidth: 10 } },
-          tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${fmtNum(ctx.parsed)}` } },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${fmtCurrency(ctx.parsed)}` } },
         },
       },
     });
   } else {
     $('barChart').classList.add('hidden');
     $('pieChart').classList.add('hidden');
+    $('barEmpty').textContent = 'No categorical column detected to group by.';
+    $('pieEmpty').textContent = '—';
     $('barEmpty').classList.remove('hidden');
     $('pieEmpty').classList.remove('hidden');
   }
@@ -335,7 +458,7 @@ function renderDashboard() {
         }],
       },
       options: {
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => fmtNum(ctx.parsed.y) } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => fmtCurrency(ctx.parsed.y) } } },
         scales: {
           x: { ticks: { color: COLORS.textDim, font: { family: 'IBM Plex Sans', size: 11 } }, grid: { display: false } },
           y: { ticks: { color: COLORS.textDim, font: { family: 'IBM Plex Mono', size: 11 } }, grid: { color: COLORS.border } },
@@ -347,17 +470,29 @@ function renderDashboard() {
   }
 
   const previewRows = rows.slice(0, 10);
+  $('tableTitle').textContent = rows.length > 10 ? `First 10 of ${rows.length} rows` : `All ${rows.length} rows`;
   const thead = `<thead><tr>${cols.map((c) => `<th>${c.name}</th>`).join('')}</tr></thead>`;
   const tbody = `<tbody>${previewRows.map((r) => `<tr>${cols.map((c) => {
     const v = r[c.name];
     let out = '';
     if (v instanceof Date) out = v.toLocaleDateString();
     else if (v === null || v === undefined) out = '';
-    else if (typeof v === 'number') out = fmtNum(v);
+    else if (typeof v === 'number') out = (numCol && c.name === numCol.name) ? fmtCurrency(v) : fmtNum(v);
     else out = String(v);
     return `<td>${out}</td>`;
   }).join('')}</tr>`).join('')}</tbody>`;
   $('dataTable').innerHTML = thead + tbody;
+}
+
+function loadDataset(rows, fileName) {
+  allRows = rows;
+  window.__fileName = fileName;
+  cols = detectColumns(allRows);
+  numCol = pickPrimaryNumeric(cols);
+  catCol = pickCategory(cols);
+  dateCol = pickDate(cols);
+  setupFilterBar();
+  applyFilters();
 }
 
 function parseFile(file) {
@@ -370,9 +505,7 @@ function parseFile(file) {
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const json = XLSX.utils.sheet_to_json(sheet, { defval: null });
       if (!json.length) throw new Error('empty');
-      rows = json;
-      window.__fileName = file.name;
-      renderDashboard();
+      loadDataset(json, file.name);
     } catch (err) {
       $('dzTitle').textContent = 'Drop an Excel file here';
       $('dzError').textContent = "Could not read that file. Make sure it's a valid .xlsx, .xls, or .csv file.";
@@ -387,6 +520,7 @@ function parseFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
+// wiring
 $('importBtn').addEventListener('click', () => $('fileInput').click());
 $('fileInput').addEventListener('change', (e) => e.target.files[0] && parseFile(e.target.files[0]));
 $('dropzone').addEventListener('click', () => $('fileInput').click());
@@ -398,16 +532,28 @@ $('dropzone').addEventListener('drop', (e) => {
   const file = e.dataTransfer.files[0];
   if (file) parseFile(file);
 });
-$('demoBtn').addEventListener('click', () => {
-  rows = buildSample();
-  window.__fileName = 'sample_sales.xlsx (demo data)';
-  renderDashboard();
-});
+$('demoBtn').addEventListener('click', () => loadDataset(buildSample(), 'sample_sales.xlsx (demo data)'));
 $('clearBtn').addEventListener('click', () => {
-  rows = null;
+  allRows = null;
   $('dashboard').classList.add('hidden');
   $('dropzone').classList.remove('hidden');
   $('fileInput').value = '';
+});
+
+let searchDebounce;
+$('searchInput').addEventListener('input', () => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(applyFilters, 150);
+});
+$('categoryFilter').addEventListener('change', applyFilters);
+$('dateFrom').addEventListener('change', applyFilters);
+$('dateTo').addEventListener('change', applyFilters);
+$('resetFiltersBtn').addEventListener('click', () => {
+  $('searchInput').value = '';
+  $('categoryFilter').value = '';
+  $('dateFrom').value = '';
+  $('dateTo').value = '';
+  applyFilters();
 });
 </script>
 </body>

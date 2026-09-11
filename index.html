@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Revenue Overview</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Spectral:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #12161B;
+    --surface: #181E25;
+    --surface-alt: #1F2730;
+    --border: #2C3742;
+    --text: #EDEAE0;
+    --text-dim: #8FA0AC;
+    --gold: #C9A24B;
+    --teal: #4C9A8B;
+    --rose: #B5674A;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 36px 24px 56px; }
+
+  header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    flex-wrap: wrap; gap: 16px; margin-bottom: 28px;
+  }
+  .eyebrow { font-size: 12px; color: var(--gold); letter-spacing: 0.03em; margin-bottom: 6px; }
+  h1 { font-family: 'Spectral', serif; font-weight: 500; font-size: 32px; margin: 0; }
+
+  .btns { display: flex; gap: 10px; }
+  button {
+    font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; cursor: pointer;
+    padding: 9px 16px; border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+  }
+  button.primary { background: var(--gold); color: #1A1508; border: none; font-weight: 600; padding: 9px 18px; }
+
+  #dropzone {
+    border: 1px dashed var(--border);
+    background: var(--surface);
+    padding: 70px 24px;
+    text-align: center;
+    cursor: pointer;
+  }
+  #dropzone.drag { border-color: var(--gold); background: var(--surface-alt); }
+  #dropzone .title { font-family: 'Spectral', serif; font-size: 22px; margin-bottom: 8px; }
+  #dropzone .sub { color: var(--text-dim); font-size: 13.5px; }
+  #dropzone .err { color: var(--rose); margin-top: 16px; font-size: 13px; }
+
+  .meta { font-size: 12px; color: var(--text-dim); margin-bottom: 18px; font-family: 'IBM Plex Mono', monospace; }
+
+  .grid { display: grid; gap: 14px; }
+  .stats { grid-template-columns: 1.4fr 1fr 1fr 1fr; margin-bottom: 14px; }
+  .charts { grid-template-columns: 1.6fr 1fr; margin-bottom: 14px; }
+  @media (max-width: 780px) {
+    .stats { grid-template-columns: 1fr 1fr; }
+    .charts { grid-template-columns: 1fr; }
+  }
+
+  .card { background: var(--surface); border: 1px solid var(--border); padding: 20px 22px; }
+  .card.big { padding: 28px 26px; min-height: 150px; }
+  .card:not(.big) { min-height: 120px; }
+  .card { display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+  .card .label { font-size: 12px; letter-spacing: 0.03em; color: var(--text-dim); }
+  .card .value { font-family: 'Spectral', serif; font-size: 26px; line-height: 1.05; }
+  .card.big .value { font-size: 42px; }
+  .card .sub { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text-dim); }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); padding: 20px 20px 12px; }
+  .panel .ptitle { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
+  .panel canvas { max-height: 260px; }
+  .empty-note { color: var(--text-dim); font-size: 13px; padding: 40px 0; text-align: center; }
+
+  table.sd-table { border-collapse: collapse; width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; }
+  table.sd-table th { text-align: left; padding: 10px 12px; color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; }
+  table.sd-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  table.sd-table tr:nth-child(even) { background: var(--surface-alt); }
+  .table-wrap { overflow-x: auto; }
+
+  .clear-row { margin-top: 18px; text-align: right; }
+  #fileInput { display: none; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">Sales &amp; revenue</div>
+      <h1>Revenue overview</h1>
+    </div>
+    <div class="btns">
+      <button id="demoBtn">Load demo data</button>
+      <button id="importBtn" class="primary">Import Excel file</button>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+    </div>
+  </header>
+
+  <div id="dropzone">
+    <div class="title" id="dzTitle">Drop an Excel file here</div>
+    <div class="sub">.xlsx, .xls, or .csv — parsed entirely in your browser, nothing leaves this page.</div>
+    <div class="err hidden" id="dzError"></div>
+  </div>
+
+  <div id="dashboard" class="hidden">
+    <div class="meta" id="metaLine"></div>
+
+    <div class="grid stats" id="statCards"></div>
+
+    <div class="grid charts">
+      <div class="panel">
+        <div class="ptitle" id="catTitle">By category</div>
+        <canvas id="barChart"></canvas>
+        <div id="barEmpty" class="empty-note hidden">No categorical column detected to group by.</div>
+      </div>
+      <div class="panel">
+        <div class="ptitle">Share of total</div>
+        <canvas id="pieChart"></canvas>
+        <div id="pieEmpty" class="empty-note hidden">—</div>
+      </div>
+    </div>
+
+    <div class="panel hidden" id="trendPanel" style="margin-bottom:14px;">
+      <div class="ptitle">Trend by month</div>
+      <canvas id="trendChart"></canvas>
+    </div>
+
+    <div class="panel table-wrap">
+      <div class="ptitle">First 10 rows</div>
+      <table class="sd-table" id="dataTable"></table>
+    </div>
+
+    <div class="clear-row">
+      <button id="clearBtn">Clear and import another file</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLORS = { gold: '#C9A24B', teal: '#4C9A8B', rose: '#B5674A', border: '#2C3742', textDim: '#8FA0AC', text: '#EDEAE0', surface: '#181E25' };
+const SLICE_COLORS = ['#C9A24B', '#4C9A8B', '#B5674A', '#7A93A6', '#8E7A4C', '#5B8375', '#9C6B57', '#6E7F8C'];
+
+let rows = null;
+let charts = { bar: null, pie: null, trend: null };
+
+const $ = (id) => document.getElementById(id);
+
+function fmtNum(n) {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: n % 1 === 0 ? 0 : 2 }).format(n);
+}
+function monthLabel(key) {
+  const [y, m] = key.split('-');
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleString('en-US', { month: 'short', year: '2-digit' });
+}
+
+function detectColumns(rows) {
+  if (!rows.length) return [];
+  const headers = Object.keys(rows[0]);
+  return headers.map((h) => {
+    const vals = rows.map((r) => r[h]).filter((v) => v !== undefined && v !== null && v !== '');
+    if (!vals.length) return { name: h, type: 'string' };
+    const numCount = vals.filter((v) => typeof v === 'number').length;
+    const dateCount = vals.filter((v) => v instanceof Date && !isNaN(v)).length;
+    if (numCount / vals.length > 0.7) return { name: h, type: 'number' };
+    if (dateCount / vals.length > 0.7) return { name: h, type: 'date' };
+    return { name: h, type: 'string' };
+  });
+}
+function pickPrimaryNumeric(cols) {
+  const kw = ['revenue', 'sales', 'amount', 'total', 'price', 'value', 'income', 'profit'];
+  return cols.find((c) => c.type === 'number' && kw.some((k) => c.name.toLowerCase().includes(k))) ||
+         cols.find((c) => c.type === 'number');
+}
+function pickCategory(cols) {
+  const kw = ['product', 'category', 'item', 'region', 'customer', 'name', 'type', 'segment'];
+  return cols.find((c) => c.type === 'string' && kw.some((k) => c.name.toLowerCase().includes(k))) ||
+         cols.find((c) => c.type === 'string');
+}
+function pickDate(cols) { return cols.find((c) => c.type === 'date'); }
+
+function groupSum(rows, catCol, numCol, topN = 7) {
+  const map = new Map();
+  rows.forEach((r) => {
+    const key = r[catCol] === undefined || r[catCol] === null || r[catCol] === '' ? 'Unspecified' : String(r[catCol]);
+    const val = Number(r[numCol]) || 0;
+    map.set(key, (map.get(key) || 0) + val);
+  });
+  const arr = Array.from(map, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  if (arr.length > topN) {
+    const top = arr.slice(0, topN);
+    const rest = arr.slice(topN).reduce((s, x) => s + x.value, 0);
+    top.push({ name: 'Other', value: rest });
+    return top;
+  }
+  return arr;
+}
+function groupByMonth(rows, dateCol, numCol) {
+  const map = new Map();
+  rows.forEach((r) => {
+    const d = r[dateCol];
+    if (!(d instanceof Date) || isNaN(d)) return;
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    map.set(key, (map.get(key) || 0) + (Number(r[numCol]) || 0));
+  });
+  return Array.from(map, ([month, value]) => ({ month, value })).sort((a, b) => a.month.localeCompare(b.month));
+}
+
+function buildSample() {
+  const products = ['Kopi Blend', 'Durian Puree', 'Sabah Tea', 'Hibiscus Syrup', 'Pineapple Jam'];
+  const rows = [];
+  const start = new Date(2025, 9, 1);
+  for (let i = 0; i < 90; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const n = 1 + Math.floor(Math.random() * 4);
+    for (let j = 0; j < n; j++) {
+      rows.push({
+        Date: d,
+        Product: products[Math.floor(Math.random() * products.length)],
+        Revenue: Math.round(20 + Math.random() * 480),
+        Units: 1 + Math.floor(Math.random() * 12),
+      });
+    }
+  }
+  return rows;
+}
+
+function statCard(label, value, sub, big) {
+  return `<div class="card ${big ? 'big' : ''}">
+    <div class="label">${label}</div>
+    <div class="value">${value}</div>
+    ${sub ? `<div class="sub">${sub}</div>` : ''}
+  </div>`;
+}
+
+function renderDashboard() {
+  const cols = detectColumns(rows);
+  const numCol = pickPrimaryNumeric(cols);
+  const catCol = pickCategory(cols);
+  const dateCol = pickDate(cols);
+
+  $('dashboard').classList.remove('hidden');
+  $('dropzone').classList.add('hidden');
+
+  if (!numCol) {
+    $('dashboard').innerHTML = `<div class="panel" style="color:${COLORS.rose}">No numeric column detected — need at least one column of numbers to build stats.</div>`;
+    return;
+  }
+
+  const values = rows.map((r) => Number(r[numCol.name]) || 0);
+  const total = values.reduce((s, v) => s + v, 0);
+  const avg = total / rows.length;
+  const max = Math.max(...values);
+  const maxRow = rows[values.indexOf(max)];
+  const byCategory = catCol ? groupSum(rows, catCol.name, numCol.name) : null;
+  const byMonth = dateCol ? groupByMonth(rows, dateCol.name, numCol.name) : null;
+
+  $('metaLine').textContent = `${window.__fileName} · ${rows.length} rows · summing "${numCol.name}"` +
+    (catCol ? ` · grouped by "${catCol.name}"` : '') +
+    (dateCol ? ` · trend by "${dateCol.name}"` : '');
+
+  $('statCards').innerHTML =
+    statCard(`Total ${numCol.name}`, fmtNum(total), `across ${rows.length} records`, true) +
+    statCard('Average per record', fmtNum(Math.round(avg * 100) / 100)) +
+    statCard('Highest single value', fmtNum(max), catCol ? String(maxRow[catCol.name] ?? '') : '') +
+    statCard('Records', fmtNum(rows.length), dateCol ? `${byMonth?.length || 0} months covered` : '');
+
+  $('catTitle').textContent = catCol ? `By ${catCol.name}` : 'Breakdown';
+
+  Object.values(charts).forEach((c) => c && c.destroy());
+
+  if (byCategory) {
+    $('barEmpty').classList.add('hidden');
+    $('pieEmpty').classList.add('hidden');
+    $('barChart').classList.remove('hidden');
+    $('pieChart').classList.remove('hidden');
+
+    charts.bar = new Chart($('barChart'), {
+      type: 'bar',
+      data: {
+        labels: byCategory.map((d) => d.name),
+        datasets: [{ data: byCategory.map((d) => d.value), backgroundColor: byCategory.map((_, i) => SLICE_COLORS[i % SLICE_COLORS.length]) }],
+      },
+      options: {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => fmtNum(ctx.parsed.y) } } },
+        scales: {
+          x: { ticks: { color: COLORS.textDim, font: { family: 'IBM Plex Sans', size: 11 } }, grid: { display: false } },
+          y: { ticks: { color: COLORS.textDim, font: { family: 'IBM Plex Mono', size: 11 } }, grid: { color: COLORS.border } },
+        },
+      },
+    });
+
+    charts.pie = new Chart($('pieChart'), {
+      type: 'doughnut',
+      data: {
+        labels: byCategory.map((d) => d.name),
+        datasets: [{ data: byCategory.map((d) => d.value), backgroundColor: byCategory.map((_, i) => SLICE_COLORS[i % SLICE_COLORS.length]), borderColor: COLORS.surface }],
+      },
+      options: {
+        plugins: {
+          legend: { position: 'bottom', labels: { color: COLORS.textDim, font: { family: 'IBM Plex Sans', size: 11 }, boxWidth: 10 } },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${fmtNum(ctx.parsed)}` } },
+        },
+      },
+    });
+  } else {
+    $('barChart').classList.add('hidden');
+    $('pieChart').classList.add('hidden');
+    $('barEmpty').classList.remove('hidden');
+    $('pieEmpty').classList.remove('hidden');
+  }
+
+  if (byMonth && byMonth.length > 1) {
+    $('trendPanel').classList.remove('hidden');
+    charts.trend = new Chart($('trendChart'), {
+      type: 'line',
+      data: {
+        labels: byMonth.map((d) => monthLabel(d.month)),
+        datasets: [{
+          data: byMonth.map((d) => d.value),
+          borderColor: COLORS.teal,
+          backgroundColor: 'rgba(76,154,139,0.25)',
+          fill: true, tension: 0.35, pointRadius: 2,
+        }],
+      },
+      options: {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => fmtNum(ctx.parsed.y) } } },
+        scales: {
+          x: { ticks: { color: COLORS.textDim, font: { family: 'IBM Plex Sans', size: 11 } }, grid: { display: false } },
+          y: { ticks: { color: COLORS.textDim, font: { family: 'IBM Plex Mono', size: 11 } }, grid: { color: COLORS.border } },
+        },
+      },
+    });
+  } else {
+    $('trendPanel').classList.add('hidden');
+  }
+
+  const previewRows = rows.slice(0, 10);
+  const thead = `<thead><tr>${cols.map((c) => `<th>${c.name}</th>`).join('')}</tr></thead>`;
+  const tbody = `<tbody>${previewRows.map((r) => `<tr>${cols.map((c) => {
+    const v = r[c.name];
+    let out = '';
+    if (v instanceof Date) out = v.toLocaleDateString();
+    else if (v === null || v === undefined) out = '';
+    else if (typeof v === 'number') out = fmtNum(v);
+    else out = String(v);
+    return `<td>${out}</td>`;
+  }).join('')}</tr>`).join('')}</tbody>`;
+  $('dataTable').innerHTML = thead + tbody;
+}
+
+function parseFile(file) {
+  $('dzError').classList.add('hidden');
+  $('dzTitle').textContent = 'Reading file…';
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(sheet, { defval: null });
+      if (!json.length) throw new Error('empty');
+      rows = json;
+      window.__fileName = file.name;
+      renderDashboard();
+    } catch (err) {
+      $('dzTitle').textContent = 'Drop an Excel file here';
+      $('dzError').textContent = "Could not read that file. Make sure it's a valid .xlsx, .xls, or .csv file.";
+      $('dzError').classList.remove('hidden');
+    }
+  };
+  reader.onerror = () => {
+    $('dzTitle').textContent = 'Drop an Excel file here';
+    $('dzError').textContent = 'Something went wrong reading the file.';
+    $('dzError').classList.remove('hidden');
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+$('importBtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', (e) => e.target.files[0] && parseFile(e.target.files[0]));
+$('dropzone').addEventListener('click', () => $('fileInput').click());
+$('dropzone').addEventListener('dragover', (e) => { e.preventDefault(); $('dropzone').classList.add('drag'); });
+$('dropzone').addEventListener('dragleave', () => $('dropzone').classList.remove('drag'));
+$('dropzone').addEventListener('drop', (e) => {
+  e.preventDefault();
+  $('dropzone').classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file) parseFile(file);
+});
+$('demoBtn').addEventListener('click', () => {
+  rows = buildSample();
+  window.__fileName = 'sample_sales.xlsx (demo data)';
+  renderDashboard();
+});
+$('clearBtn').addEventListener('click', () => {
+  rows = null;
+  $('dashboard').classList.add('hidden');
+  $('dropzone').classList.remove('hidden');
+  $('fileInput').value = '';
+});
+</script>
+</body>
+</html>
